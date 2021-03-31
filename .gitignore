@@ -3,6 +3,7 @@
 
 # executable files
 *.out
+main
 
 # ipynb stuff
 *.ipynb*
