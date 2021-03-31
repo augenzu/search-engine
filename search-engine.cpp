@@ -1,3 +1,7 @@
+// g++ -std=c++2a search-engine.cpp -o main
+
+
+#include <algorithm>
 #include <cassert>
 #include <cctype>
 #include <functional>
@@ -17,8 +21,8 @@
 class TermId {
 public:
     TermId(const std::string &term)
-    : _term(term),
-    _term_id(_hash(term)) {}
+    : _term(lowerized(term)),
+    _term_id(_hash(_term)) {}
 
     bool operator<(const TermId &rhs) const {
         bool lt = _term_id < rhs._term_id;
@@ -29,10 +33,21 @@ public:
         return _term;
     }
 
+    std::string to_string() const {
+        return "{ " + std::to_string(_term_id) + ": " + _term + " }";
+    }
+
 private:
     std::string _term;
     int64_t _term_id;
     std::hash<std::string> _hash{};
+
+    std::string lowerized(const std::string term) {
+        std::string data{ term };
+        std::transform(data.begin(), data.end(), data.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+        return data;
+    }
 };
 
 
@@ -191,15 +206,20 @@ std::string to_string(const std::variant<Token, TermId> &var) {
         Token token = std::get<Token>(var);
         switch (token) {
             case Token::LEFT_BKT:
-                return "LEFT_BKT";
+                // return "LEFT_BKT";
+                return "(";
             case Token::RIGHT_BKT:
-                return "RIGHT_BKT";
+                // return "RIGHT_BKT";
+                return ")";
             case Token::NOT:
-                return "NOT";
+                // return "NOT";
+                return "!";
             case Token::AND:
-                return "AND";
+                // return "AND";
+                return "&";
             case Token::OR:
-                return "OR";
+                // return "OR";
+                return "|";
         }
     } else if (std::holds_alternative<TermId>(var)) {
         TermId term_id = std::get<TermId>(var);
@@ -220,13 +240,27 @@ public:
     QueryParser &operator=(QueryParser &&) = delete;
 
     void parse(const std::string &query) {
+        // std::cout << std::endl;
         tokenize(query);
+        // std::cout << std::endl;
+
+        // std::cout << "Tokenized query: ";
+        // for (const auto &token : _tokens) {
+        //     std::cout << to_string(token) << " ";
+        // }
+        // std::cout << std::endl;
 
         _parsed.clear();
         State init_state{ State::OR_EXPR };
         int beg_idx{ 0 };
 
         int end_idx = parseRecursive(init_state, beg_idx);
+
+        // std::cout << "Parsed query: ";
+        // for (const auto &token : _parsed) {
+        //     std::cout << to_string(token) << " ";
+        // }
+        // std::cout << std::endl << std::endl;
     }
 
     auto parsed() const {
@@ -245,49 +279,62 @@ private:
         NESTED_EXPR
     };
 
-    std::regex _word{"(\\w)"};  // TODO: check this!
+    const std::map<std::string, Token> _tokens_set{
+      { "(", Token::LEFT_BKT },
+      { ")", Token::RIGHT_BKT },
+      { "!", Token::NOT },
+      { "&", Token::AND },
+      { "|", Token::OR },
+    };
+
+    std::regex _op{ "[\\(\\)\\!\\&\\|]" };
+    std::regex _word{ "(\\w)+" };
     std::vector<std::variant<Token, TermId>> _tokens;
     int _n_tokens;
     std::vector<std::variant<Token, TermId>> _parsed;
     std::set<TermId> _term_ids;
 
     void tokenize(const std::string query) {
+        std::string remainder{ query };
         _tokens.clear();
         _term_ids.clear();
 
-        int idx = 0;
-        int end_idx = query.size();
+        std::smatch op_match;
+        std::smatch word_match;
 
-        for (; idx != end_idx; ++idx) {
-            while (std::isspace(query[idx])) {
-                ++idx;
-            }
-            if (query[idx] == '(') {
-                _tokens.push_back(Token::LEFT_BKT);
-            } else if (query[idx] == ')') {
-                _tokens.push_back(Token::RIGHT_BKT);
-            } else if (query[idx] == '(') {
-                _tokens.push_back(Token::LEFT_BKT);
-            } else if (query[idx] == '!') {
-                _tokens.push_back(Token::NOT);
-            } else if (query[idx] == '&') {
-                _tokens.push_back(Token::AND);
-            } else if (query[idx] == '|') {
-                _tokens.push_back(Token::OR);
-            } else if (query[idx] == '(') {
-                _tokens.push_back(Token::LEFT_BKT);
-            } else {  // TODO: use regexp here
-                std::string token = "";
-                for (; idx != end_idx
-                        && (std::isalnum(query[idx]) || query[idx] == '_'); ++idx) {
-                    token += query[idx];
-                }
-                --idx;
-                TermId term_id{ token };
+        while (std::regex_search(remainder, op_match, _op)
+                && std::regex_search(remainder, word_match, _word)) {
+            if (op_match.position(0) < word_match.position(0)) {
+                // std::cout << "op parsed:   '" << op_match.str() << "'" << std::endl;
+                Token token{ _tokens_set.at(op_match.str()) };
+                _tokens.push_back(token);
+                remainder = op_match.suffix();
+            } else {
+                // std::cout << "word parsed: '" << word_match.str() << "'" << std::endl;
+                TermId term_id{ word_match.str() };
                 _tokens.push_back(term_id);
                 if (!_term_ids.contains(term_id)) {
                     _term_ids.insert(term_id);
                 }
+                remainder = word_match.suffix();
+            }
+        }
+        if (std::regex_search(remainder, op_match, _op)) {
+            while (std::regex_search(remainder, op_match, _op)) {
+                // std::cout << "op parsed:   '" << op_match.str() << "'" << std::endl;
+                Token token{ _tokens_set.at(op_match.str()) };
+                _tokens.push_back(token);
+                remainder = op_match.suffix();
+            }
+        } else {
+            while (std::regex_search(remainder, word_match, _word)) {
+                // std::cout << "word parsed: '" << word_match.str() << "'" << std::endl;
+                TermId term_id{ word_match.str() };
+                _tokens.push_back(term_id);
+                if (!_term_ids.contains(term_id)) {
+                    _term_ids.insert(term_id);
+                }
+                remainder = word_match.suffix();
             }
         }
 
@@ -356,9 +403,16 @@ public:
         _query_parser.parse(query_str);
         auto query = _query_parser.parsed();
         auto term_ids = _query_parser.term_ids();
+        // std::cout << "term_ids: ";
+        // for (const auto &term_id : term_ids) {
+        //     std::cout << term_id.to_string() << " ";
+        // }
+        // std::cout << std::endl;
+        // std::cout << "Before reset" << std::endl;
         for (const auto &term_id : term_ids) {
             _inverted_index.at(term_id).reset();
         }
+        // std::cout << "After reset" << std::endl << std::endl;
 
         std::vector<DocId> search_result;
         DocId search_doc_id = _alpha_doc_id;
@@ -456,3 +510,6 @@ int main() {
 
     return 0;
 }
+
+
+// g++ -std=c++2a search-engine.cpp -o main
